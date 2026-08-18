@@ -24,7 +24,12 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "allowImportingTsExtensions": false
+
+    // Local relative imports carry the `.ts` extension (the harness
+    // convention); these two accept that and rewrite to `.js` on emit, so the
+    // output is valid ESM without hand-maintained extensions.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["src"]
 }

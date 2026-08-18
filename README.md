@@ -130,8 +130,45 @@ treat it as equivalent to what the agent can already read.
 ```sh
 npm install
 npm run typecheck    # tsc --noEmit
+npm test             # vitest run
 npm run build        # tsc + tsdown -> lib/index.js, lib/client.js
 ```
+
+### Layout
+
+| Path | Role |
+|---|---|
+| `src/index.ts` | Host half: the `/preview` route |
+| `src/markdown.ts` | Markdown to HTML, and the page shell |
+| `src/preview-path.ts` | Request-path resolution and containment |
+| `src/client/index.ts` | Browser half: slot registrations, button, panel |
+| `src/client/artifact-definition.ts` | The Conversation Node Definition |
+| `src/client/artifact-events.ts` | Reading writes out of session events |
+| `src/client/panel-width.ts` | Panel width bounds, default, drag arithmetic |
+
+### Tests
+
+`npm test` runs 215 tests over the logic modules; `npm run test:coverage` reports
+100% of statements, functions, and lines, with three documented unreachable
+branches. The suites are organised by the contract each one pins:
+
+| Suite | Covers |
+|---|---|
+| `markdown.spec.ts` | Conversion, and that fenced code is never reinterpreted |
+| `preview-path.spec.ts` | Path resolution, and every traversal attempt |
+| `preview-route.spec.ts` | Route responses against a real temporary workspace |
+| `artifact-events.spec.ts` | Event field reading, on real session-log payloads |
+| `artifact-definition.spec.ts` | `callId` correlation and settled/failed visibility |
+| `panel-width.spec.ts` | Clamping, drag direction, and persistence |
+| `plugin-registration.spec.ts` | What `apply()` registers, under the slot rules |
+
+Every past defect in this plugin has a test that fails without its fix, verified
+by re-introducing each one and confirming the suite reds: a `shell.overlay`
+registration missing its `id` (which failed the whole client tree at boot), an
+absolute path concatenated onto the workspace root, reading the write path from
+the unlogged `callView`, inline rules leaking into fenced code, an inverted drag
+direction, a compounding drag base, a missing `isError` read as failure, and
+removed traversal containment.
 
 The browser bundle is not an ordinary module: the Web shell fetches it outside
 any module graph, so it must self-register as
@@ -139,7 +176,8 @@ any module graph, so it must self-register as
 through the shell's frozen module table. `tsdown.config.ts` produces that
 wrapper and keeps the shell-provided specifiers (React, cordis, the client
 runtime) external — inlining React would give the plugin a second React identity
-and break hooks.
+and break hooks. Tests reach the client runtime through an alias in
+`vitest.config.ts`, which is the test-side equivalent of that table entry.
 
 `shell.overlay` is declared by `@deepseek-ai/dsh-client-ui-layout`, which is not
 published to npm, so its `SlotMap` entry is restated locally in
