@@ -1,4 +1,6 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "DSH plugin",
   "compilerOptions": {
     "target": "ES2024",
     "module": "NodeNext",
@@ -18,8 +20,6 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "rootDir": "src",
-    "outDir": "lib/types",
 
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -30,6 +30,5 @@
     // output is valid ESM without hand-maintained extensions.
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true
-  },
-  "include": ["src"]
+  }
 }

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.plugin.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "noEmit": true
+  },
+  "include": ["src"]
+}
