@@ -35,15 +35,20 @@ cd "${DSH_HOME:-$HOME/.dsh}/profiles/web"
 npm install @hustshawn/dsh-artifact-preview
 ```
 
-To run from a source checkout instead, install it by path:
+To develop against a checkout instead, **link** it, so a rebuild is picked up
+without reinstalling:
 
 ```sh
-git clone https://github.com/hustshawn/dsh-artifact-preview.git
-cd dsh-artifact-preview && npm install && npm run build
+git clone https://github.com/hustshawn/dsh-plugins.git
+cd dsh-plugins && pnpm install
+pnpm --filter @hustshawn/dsh-artifact-preview run build
 
 cd "${DSH_HOME:-$HOME/.dsh}/profiles/web"
-npm install "file:/absolute/path/to/dsh-artifact-preview"
+pnpm add "link:/absolute/path/to/dsh-plugins/packages/artifact-preview"
 ```
+
+A link resolves to the checkout itself, so `pnpm run build` in the repository is
+all a change needs — subject to the restart rule below.
 
 ### 2. Add one row to the profile patch
 
@@ -214,8 +219,14 @@ the declaring plugin; the local declaration only makes the key type-visible here
 
 ## Known limitations
 
-- **Restart required to install or remove.** The Web profile ships with the
-  shared HMR row disabled, so there is no hot path for adding a plugin row.
+- **Restart required to install, remove, or change the host half.** The Loader
+  reads the composition at startup, so adding or removing the row needs a
+  restart. Changing the host half needs one too: `dsh-client-hmr` reloads
+  *script-loaded client plugins*, so a rebuilt browser bundle is picked up, but
+  the node half is already imported into the running process and nothing
+  replaces it. Rebuilding only one half leaves the two disagreeing — a browser
+  bundle requesting a route shape the running host does not serve — so after a
+  host-half change, restart rather than relying on the reload.
 - **Only `.html`, `.htm`, `.md`, `.markdown`.** Other artifact kinds (SVG,
   Mermaid, JSON) are not recognised.
 - **Markdown support is a pragmatic subset.** Headings, emphasis, lists, links,
