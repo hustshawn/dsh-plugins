@@ -18,11 +18,16 @@ interface Captured {
   headers: Record<string, unknown>
 }
 
+/** Session whose recorded cwd is the temp workspace. */
+const SESSION = 'session-live'
+/** Session present only in durable storage, never loaded. */
+const COLD_SESSION = 'session-cold'
+
 let root: string
 let handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 
 /** Drive the handler with one request and capture what it answered. */
-async function request(path: string, method = 'GET'): Promise<Captured> {
+async function request(path: string, method = 'GET', sessionId = SESSION): Promise<Captured> {
   const captured: Captured = { status: 0, body: '', headers: {} }
   const res = {
     writeHead(status: number, headers?: Record<string, unknown>) {
@@ -35,7 +40,8 @@ async function request(path: string, method = 'GET'): Promise<Captured> {
       return this
     },
   } as unknown as ServerResponse
-  const req = { method, url: `${ROUTE_PATH}/${encodeURIComponent(path)}` } as IncomingMessage
+  const url = `${ROUTE_PATH}/${encodeURIComponent(sessionId)}/${encodeURIComponent(path)}`
+  const req = { method, url } as IncomingMessage
   await handler(req, res)
   return captured
 }
@@ -48,7 +54,13 @@ beforeAll(async () => {
   await writeFile(join(root, 'data.json'), '{"a":1}')
   await mkdir(join(root, 'nested'), { recursive: true })
   await writeFile(join(root, 'nested', 'deep.md'), '# Deep')
-  handler = createPreviewHandler(root)
+  // The session reports the temp workspace; the fallback deliberately points
+  // somewhere else, so a test passing only because of the fallback would fail.
+  handler = createPreviewHandler({
+    sessions: { get: (id: string) => (id === SESSION ? { header: { id, cwd: root } } : undefined) },
+    persistence: { list: async () => [{ id: COLD_SESSION, cwd: root }] },
+    fallbackRoot: join(root, 'not-the-workspace'),
+  } as never)
 })
 
 afterAll(async () => {
@@ -70,6 +82,8 @@ describe('plugin metadata', () => {
           return () => {}
         },
       },
+      // Session services are optional and read per request, not injected.
+      get: () => undefined,
       effect: (fn: () => unknown) => { fn() },
     }
     apply(ctx as never)
@@ -175,5 +189,46 @@ describe('refusals', () => {
   it('accepts HEAD alongside GET, since both are reads', async () => {
     const res = await request('doc.md', 'HEAD')
     expect(res.status).toBe(200)
+  })
+})
+
+describe('session rooting', () => {
+  it('resolves against the session cwd, not the launch directory', async () => {
+    // The regression this fix exists for: the fallback root in this suite is a
+    // directory that holds no fixtures, so a pass here can only come from the
+    // session's own recorded cwd.
+    const res = await request('doc.md')
+    expect(res.status).toBe(200)
+    expect(res.body).toContain('<h1>Heading</h1>')
+  })
+
+  it('serves a cold session from its durable header', async () => {
+    // Opening an artifact in older history after a restart: not loaded, but on disk.
+    const res = await request('doc.md', 'GET', COLD_SESSION)
+    expect(res.status).toBe(200)
+    expect(res.body).toContain('<h1>Heading</h1>')
+  })
+
+  it('answers 404 for an unknown session, which falls back elsewhere', async () => {
+    // The fallback root exists but holds no fixtures, so the file is not there.
+    const res = await request('doc.md', 'GET', 'session-unknown')
+    expect(res.status).toBe(404)
+  })
+
+  it('answers 400 when the URL carries no session id', async () => {
+    const captured: Captured = { status: 0, body: '', headers: {} }
+    const res = {
+      writeHead(status: number) { captured.status = status; return this },
+      end(body?: string) { captured.body = body ?? ''; return this },
+    } as unknown as ServerResponse
+    await handler({ method: 'GET', url: `${ROUTE_PATH}/doc.md` } as IncomingMessage, res)
+    expect(captured.status).toBe(400)
+  })
+
+  it('contains one session to its own workspace', async () => {
+    // A path under a DIFFERENT session's tree is outside this root, so the
+    // containment check refuses it exactly as it refuses any other escape.
+    const res = await request('/etc/passwd')
+    expect(res.status).toBe(403)
   })
 })

@@ -49,21 +49,42 @@ export function resolvePreviewTarget(requested: string, workspaceRoot: string): 
 }
 
 /**
- * Extract the decoded file path from a request URL.
+ * Extract the session id and file path from a request URL.
  *
- * A malformed percent-escape is reported as no path rather than throwing: the
- * route must answer the request, and an undecodable path names no file.
+ * The route is session-scoped — `/preview/<sessionId>/<encoded path>` — because
+ * the root a request resolves against is the SESSION's working directory, and
+ * one Host serves many sessions. The id therefore has to travel with the
+ * request; a Host-wide root cannot answer for all of them.
+ *
+ * A malformed percent-escape yields no path rather than throwing: the route must
+ * answer the request, and an undecodable path names no file.
  * @param url - Raw request URL (`req.url`).
- * @returns The decoded path after the route prefix; empty when absent or undecodable.
+ * @returns The session id and decoded path; either is empty when absent or undecodable.
  */
-export function previewPathFromUrl(url: string | undefined): string {
+export function previewRequestFromUrl(url: string | undefined): PreviewRequest {
   const pathname = new URL(url ?? '/', 'http://placeholder.invalid').pathname
-  if (!pathname.startsWith(PREVIEW_PREFIX)) return ''
-  const raw = pathname.slice(PREVIEW_PREFIX.length)
+  if (!pathname.startsWith(PREVIEW_PREFIX)) return { sessionId: '', path: '' }
+  const rest = pathname.slice(PREVIEW_PREFIX.length)
+  // The id is one segment and never contains a separator, so the FIRST slash
+  // splits it from the path. The path keeps every later slash, which is what
+  // makes an absolute path expressible when it is not percent-encoded.
+  const boundary = rest.indexOf('/')
+  if (boundary === -1) return { sessionId: '', path: '' }
   try {
-    return decodeURIComponent(raw)
+    return {
+      sessionId: decodeURIComponent(rest.slice(0, boundary)),
+      path: decodeURIComponent(rest.slice(boundary + 1)),
+    }
   } catch {
     // A lone '%' or a bad escape sequence; treat it as naming nothing.
-    return ''
+    return { sessionId: '', path: '' }
   }
+}
+
+/** The session and file one preview request names. */
+export interface PreviewRequest {
+  /** Session whose recorded working directory is the root; empty when unparseable. */
+  readonly sessionId: string
+  /** Decoded file path; empty when absent or undecodable. */
+  readonly path: string
 }

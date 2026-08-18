@@ -41,23 +41,31 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 // ── Panel state ─────────────────────────────────────────────────────────────
 
-/** Which artifact the panel shows, and whether it is open. */
+/**
+ * Which artifact the panel shows, and whether it is open.
+ *
+ * The session id travels with the path because the preview route is
+ * session-scoped: the file resolves against the SESSION's working directory, and
+ * the panel's own slot is root-scoped, so the framework hands it no session id.
+ * The button supplies it, since its slot has session scope.
+ */
 interface PanelState {
   readonly visible: boolean
   readonly path: string
+  readonly sessionId: string
 }
 
-let panelState: PanelState = { visible: false, path: '' }
+let panelState: PanelState = { visible: false, path: '', sessionId: '' }
 const listeners = new Set<() => void>()
 
 /** The panel controller the button drives; module-scoped because the panel is a singleton surface. */
 const artifactPanel = {
-  open(path: string): void {
-    panelState = { visible: true, path }
+  open(path: string, sessionId: string): void {
+    panelState = { visible: true, path, sessionId }
     for (const notify of listeners) notify()
   },
   close(): void {
-    panelState = { visible: false, path: panelState.path }
+    panelState = { ...panelState, visible: false }
     for (const notify of listeners) notify()
   },
 }
@@ -87,10 +95,18 @@ function widthStorage(): WidthStorage | undefined {
 
 // ── Chat button ─────────────────────────────────────────────────────────────
 
-/** The Open Preview row shown under a settled previewable write. */
-function ArtifactButtonNode({ node }: ChatNodeViewProps<'artifact-preview'>) {
+/**
+ * The Open Preview row shown under a settled previewable write.
+ *
+ * `sessionId` is a framework-standard prop of a session-scoped slot, and this is
+ * where it enters the feature: the panel's slot is root-scoped and receives no
+ * session id, so the button carries it across.
+ */
+function ArtifactButtonNode({ node, sessionId }: ChatNodeViewProps<'artifact-preview'>) {
   const path = node.data.path
-  const openPreview = useCallback(() => { artifactPanel.open(path) }, [path])
+  const openPreview = useCallback(() => {
+    artifactPanel.open(path, sessionId)
+  }, [path, sessionId])
 
   return createElement('div', {
     onClick: openPreview,
@@ -203,7 +219,7 @@ const ACTION_STYLE = {
 
 /** The resizable preview panel, pinned to the right edge of the frame. */
 function ArtifactPanel() {
-  const { visible, path } = usePanelState()
+  const { visible, path, sessionId } = usePanelState()
   const [width, setWidth] = useState(() => readStoredWidth(widthStorage(), window.innerWidth))
   const [dragging, setDragging] = useState(false)
   // Frozen at pointerdown so a mid-gesture re-render cannot move the origin.
@@ -265,7 +281,10 @@ function ArtifactPanel() {
 
   if (!visible) return null
 
-  const previewUrl = `/preview/${encodeURIComponent(path)}`
+  // Session-scoped: the host resolves the file against THIS session's working
+  // directory, which is what makes a preview work when `dsh web` was launched
+  // from somewhere other than the workspace.
+  const previewUrl = `/preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(path)}`
   const fileName = fileBasename(path)
 
   return createElement('div', {
@@ -306,7 +325,7 @@ function ArtifactPanel() {
       }, fileExt(path)),
       createElement('button', {
         key: 'refresh', title: 'Refresh', style: ACTION_STYLE,
-        onClick: () => { artifactPanel.open(path) },
+        onClick: () => { artifactPanel.open(path, sessionId) },
       }, '↻'),
       createElement('button', {
         key: 'external', title: 'Open in new tab', style: ACTION_STYLE,

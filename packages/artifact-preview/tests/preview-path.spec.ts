@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { join, sep } from 'node:path'
-import { previewPathFromUrl, resolvePreviewTarget } from '../src/preview-path.ts'
+import { previewRequestFromUrl, resolvePreviewTarget } from '../src/preview-path.ts'
 
 const ROOT = sep === '\\' ? 'C:\\workspace' : '/workspace'
 
@@ -64,35 +64,44 @@ describe('resolvePreviewTarget', () => {
   })
 })
 
-describe('previewPathFromUrl', () => {
-  it('extracts the path after the route prefix', () => {
-    expect(previewPathFromUrl('/preview/docs/a.md')).toBe('docs/a.md')
+describe('previewRequestFromUrl', () => {
+  it('splits the session id from the file path', () => {
+    expect(previewRequestFromUrl('/preview/session-1/docs/a.md'))
+      .toEqual({ sessionId: 'session-1', path: 'docs/a.md' })
   })
 
-  it('decodes a percent-encoded path', () => {
-    expect(previewPathFromUrl(`/preview/${encodeURIComponent('/abs/my file.md')}`))
-      .toBe('/abs/my file.md')
+  it('decodes both segments', () => {
+    const url = `/preview/${encodeURIComponent('session-1')}/${encodeURIComponent('/abs/my file.md')}`
+    expect(previewRequestFromUrl(url)).toEqual({ sessionId: 'session-1', path: '/abs/my file.md' })
+  })
+
+  it('keeps an unencoded absolute path whole, including its slashes', () => {
+    // Only the FIRST slash separates the id, so later ones stay in the path.
+    expect(previewRequestFromUrl('/preview/session-1//abs/dir/a.md'))
+      .toEqual({ sessionId: 'session-1', path: '/abs/dir/a.md' })
   })
 
   it('ignores a query string', () => {
-    expect(previewPathFromUrl('/preview/a.md?t=123')).toBe('a.md')
+    expect(previewRequestFromUrl('/preview/session-1/a.md?t=123'))
+      .toEqual({ sessionId: 'session-1', path: 'a.md' })
   })
 
-  it('returns empty for the bare prefix', () => {
-    expect(previewPathFromUrl('/preview/')).toBe('')
+  it.each([
+    ['a session id with no path segment', '/preview/session-1'],
+    ['the bare prefix', '/preview/'],
+    ['a URL outside this route', '/other/session-1/a.md'],
+    ['an absent URL', undefined],
+  ])('returns nothing for %s', (_name, url) => {
+    expect(previewRequestFromUrl(url)).toEqual({ sessionId: '', path: '' })
   })
 
-  it('returns empty for a URL outside this route', () => {
-    expect(previewPathFromUrl('/other/a.md')).toBe('')
+  it('reports an empty path when the id is present but the path is not', () => {
+    expect(previewRequestFromUrl('/preview/session-1/')).toEqual({ sessionId: 'session-1', path: '' })
   })
 
-  it('returns empty for a malformed escape instead of throwing', () => {
+  it('returns nothing for a malformed escape instead of throwing', () => {
     // A lone '%' makes decodeURIComponent throw; the route must still answer.
-    expect(() => previewPathFromUrl('/preview/%')).not.toThrow()
-    expect(previewPathFromUrl('/preview/%')).toBe('')
-  })
-
-  it('returns empty when the URL is absent', () => {
-    expect(previewPathFromUrl(undefined)).toBe('')
+    expect(() => previewRequestFromUrl('/preview/session-1/%')).not.toThrow()
+    expect(previewRequestFromUrl('/preview/session-1/%')).toEqual({ sessionId: '', path: '' })
   })
 })

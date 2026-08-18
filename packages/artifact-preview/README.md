@@ -77,7 +77,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   'http://127.0.0.1:7788/plugins/@hustshawn/dsh-artifact-preview/client.js'
 
 # the preview route answers, and a missing file is a real 404 (not the SPA shell)
-curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:7788/preview/__nope__.md'
+curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:7788/preview/no-such-session/x.md'
 ```
 
 A `404` on the second call is the useful signal: the SPA fallback would answer
@@ -88,10 +88,28 @@ A `404` on the second call is the useful signal: the SPA fallback would answer
 Two halves in one package.
 
 **Host half** (`src/index.ts`) registers a `/preview` prefix route on
-`ctx.webServer`. `.md` and `.markdown` are converted to HTML and wrapped in a
-GitHub-like stylesheet; every other extension is served verbatim. Both absolute
-and workspace-relative request paths are accepted, and a path that resolves
-outside the workspace root is rejected with `403`.
+`ctx.webServer`, addressed as `/preview/<sessionId>/<path>`. `.md` and
+`.markdown` are converted to HTML and wrapped in a GitHub-like stylesheet; every
+other extension is served verbatim. Both absolute and workspace-relative request
+paths are accepted, and a path that resolves outside the session's workspace is
+rejected with `403`.
+
+### The root is the session's, not the process's
+
+A request resolves against the working directory of the session that asked, which
+is why the route carries a session id. `dsh web` is frequently launched from an
+install or service directory while the agent works elsewhere, and one Host serves
+several sessions with different workspaces — so the launch directory answers for
+neither case. `src/session-root.ts` resolves the root in three tiers:
+
+| Tier | Source | Covers |
+|---|---|---|
+| 1 | `ctx.sessions.get(id)?.header.cwd` | The session is loaded (synchronous, no await needed) |
+| 2 | `ctx.sessionPersistence.list()` | The session is on disk but not loaded — an artifact in older history after a restart |
+| 3 | `process.cwd()` | No session answered, including a session that recorded no cwd |
+
+Both session services are optional and read per request, so a composition
+without them still serves previews at tier 3 rather than failing to load.
 
 **Browser half** (`src/client/index.ts`) contributes three things:
 
@@ -147,7 +165,8 @@ ModuleLoader wrapper and the list of shell-provided externals, so this package's
 |---|---|
 | `src/index.ts` | Host half: the `/preview` route |
 | `src/markdown.ts` | Markdown to HTML, and the page shell |
-| `src/preview-path.ts` | Request-path resolution and containment |
+| `src/preview-path.ts` | Request parsing and path containment |
+| `src/session-root.ts` | Resolving a session's root, in three tiers |
 | `src/client/index.ts` | Browser half: slot registrations, button, panel |
 | `src/client/artifact-definition.ts` | The Conversation Node Definition |
 | `src/client/artifact-events.ts` | Reading writes out of session events |
@@ -155,7 +174,7 @@ ModuleLoader wrapper and the list of shell-provided externals, so this package's
 
 ### Tests
 
-`pnpm run test` runs 215 tests over the logic modules; `pnpm run test:coverage`
+`pnpm run test` runs 236 tests over the logic modules; `pnpm run test:coverage`
 reports 100% of statements, functions, and lines, with three documented
 unreachable branches. The suites are organised by the contract each one pins:
 
@@ -163,7 +182,8 @@ unreachable branches. The suites are organised by the contract each one pins:
 |---|---|
 | `markdown.spec.ts` | Conversion, and that fenced code is never reinterpreted |
 | `preview-path.spec.ts` | Path resolution, and every traversal attempt |
-| `preview-route.spec.ts` | Route responses against a real temporary workspace |
+| `session-root.spec.ts` | Live, cold, and fallback rooting |
+| `preview-route.spec.ts` | Route responses and session rooting, against a real temporary workspace |
 | `artifact-events.spec.ts` | Event field reading, on real session-log payloads |
 | `artifact-definition.spec.ts` | `callId` correlation and settled/failed visibility |
 | `panel-width.spec.ts` | Clamping, drag direction, and persistence |
@@ -175,7 +195,8 @@ registration missing its `id` (which failed the whole client tree at boot), an
 absolute path concatenated onto the workspace root, reading the write path from
 the unlogged `callView`, inline rules leaking into fenced code, an inverted drag
 direction, a compounding drag base, a missing `isError` read as failure, and
-removed traversal containment.
+removed traversal containment, and rooting previews at the Host process cwd
+instead of the session's own working directory.
 
 The browser bundle is not an ordinary module: the Web shell fetches it outside
 any module graph, so it must self-register as
@@ -207,9 +228,9 @@ the declaring plugin; the local declaration only makes the key type-visible here
   sanitizer for untrusted documents.
 - **No live reload.** The panel shows the file as of the last load; use the
   refresh button after an edit.
-- **Preview is not per-session.** The route resolves paths against the Host
-  process working directory, which is the right root for a single-workspace
-  `dsh web` and not for serving several workspaces from one Host.
+- **A session that recorded no working directory falls back to the Host process
+  cwd.** `SessionHeader.cwd` is optional, so such a session can only preview
+  files under the directory `dsh web` was launched from.
 
 ## License
 
